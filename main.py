@@ -61,7 +61,6 @@ def getJsonData() -> dict:
                 print("Storage data found!")
 
     except Exception:
-        os.remove(db_file_name)
         print("No storage data found")
 
 
