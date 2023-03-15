@@ -17,8 +17,8 @@ bucket_name = "craam-files-bucket"
 
 s3 = boto3.client(
     "s3",
-    aws_access_key_id="AKIAVE3JHNTULM7JK4F5",
-    aws_secret_access_key="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",
+    aws_access_key_id=os.getenv("AWS_ACCESS_KEY"),
+    aws_secret_access_key=os.getenv("AWS_SECRET_KEY"),
 )
 
 
