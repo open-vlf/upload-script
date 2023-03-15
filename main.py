@@ -31,7 +31,7 @@ broadband_queue = []
 
 
 def saveJsonFile() -> None:
-    with open(db_file_name, "w") as outfile:
+    with open(db_file_name, "w+") as outfile:
         json.dump(
             {
                 "uploaded_files": uploaded_files,
@@ -44,20 +44,25 @@ def saveJsonFile() -> None:
 
 def getJsonData() -> dict:
     print("Loading storage data...")
-    with open(db_file_name) as json_file:
-        data = json.load(json_file)
-        global uploaded_files
-        global narrowband_queue
-        global broadband_queue
 
-        if data:
-            uploaded_files = data["uploaded_files"]
-            narrowband_queue = data["narrowband_queue"]
-            broadband_queue = data["broadband_queue"]
-            print("Storage data found!")
+    try:
+        with open(db_file_name) as json_file:
+            global uploaded_files
+            global narrowband_queue
+            global broadband_queue
 
-        else:
-            print("No storage data found")
+            data = json.load(json_file)
+
+            if data:
+                uploaded_files = data["uploaded_files"]
+                narrowband_queue = data["narrowband_queue"]
+                broadband_queue = data["broadband_queue"]
+
+                print("Storage data found!")
+
+    except Exception:
+        os.remove(db_file_name)
+        print("No storage data found")
 
 
 def shouldProcessFile(path: str) -> bool:
@@ -87,9 +92,7 @@ def main() -> None:
 
     getJsonData()
 
-    for path, subdirs, files in track(
-        os.walk(root), description="Finding .MAT files..."
-    ):
+    for path, subdirs, files in track(os.walk(root), description="Finding .MAT files"):
         for name in files:
             if fnmatch(name, pattern):
                 file_path = os.path.join(path, name)
@@ -115,10 +118,10 @@ def main() -> None:
         f"Found {len(narrowband_queue)} narrowband files and {len(broadband_queue)} broadband files"
     )
 
-    for item in track(narrowband_queue, description="Working on narrowband files..."):
+    for item in track(narrowband_queue, description="Working on narrowband files"):
         uploadToS3(item, "NARROWBAND")
 
-    for item in track(broadband_queue, description="Working on broadband files..."):
+    for item in track(broadband_queue, description="Working on broadband files"):
         uploadToS3(item, "BROADBAND")
 
     saveJsonFile()
