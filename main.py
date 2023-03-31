@@ -122,16 +122,16 @@ def store_narrowband(file_name: str, path: str, db) -> None:
     file_data = get_narrowband_data(file_name)
 
     data = f'20{file_data["Year"]}/{file_data["Month"]}/{file_data["Day"]}'
-    s3_path = f'{data}/narrowband/{file_data["Station_ID"]}'
+    s3_path = f'{data}/narrowband/{file_data["Station_ID"]}/{file_name}'
     collection_name = f'craam/date/year/20{file_data["Year"]}/station/{file_data["Station_ID"]}/month_day/{file_data["Month"]}_{file_data["Day"]}/narrowband'
 
-    s3.upload_file(s3_path, bucket_name, file_name)
+    s3.upload_file(path, bucket_name, s3_path)
 
     db.collection(collection_name).document(file_name).set(
         {
             "fileName": file_name,
             "path": s3_path,
-            "url": f"https://{bucket_name}.s3.sa-east-1.amazonaws.com/{s3_path}/{file_name}",
+            "url": f"https://{bucket_name}.s3.sa-east-1.amazonaws.com/{s3_path}",
             "stationId": file_data["Station_ID"],
             "transmitter": file_data["Transmitter"],
             "dateTime": datetime(
@@ -152,19 +152,19 @@ def store_narrowband(file_name: str, path: str, db) -> None:
 
 
 def store_broadband(file_name: str, path: str, db) -> None:
-    file_data = get_narrowband_data(file_name)
+    file_data = get_broadband_data()(file_name)
 
     data = f'20{file_data["Year"]}/{file_data["Month"]}/{file_data["Day"]}'
-    s3_path = f'{data}/broadband/{file_data["Station_ID"]}'
+    s3_path = f'{data}/broadband/{file_data["Station_ID"]}/{file_name}'
     collection_name = f'craam/date/year/20{file_data["Year"]}/station/{file_data["Station_ID"]}/month_day/{file_data["Month"]}_{file_data["Day"]}/broadband'
 
-    s3.upload_file(s3_path, bucket_name, file_name)
+    s3.upload_file(path, bucket_name, s3_path)
 
     db.collection(collection_name).document(file_name).set(
         {
             "fileName": file_name,
             "path": s3_path,
-            "url": f"https://{bucket_name}.s3.sa-east-1.amazonaws.com/{s3_path}/{file_name}",
+            "url": f"https://{bucket_name}.s3.sa-east-1.amazonaws.com/{s3_path}",
             "stationId": file_data["Station_ID"],
             "dateTime": datetime(
                 int(f"20{file_data['Year']}"),

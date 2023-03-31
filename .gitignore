@@ -162,3 +162,4 @@ db.json
 credentials.json
 .DS_Store
 settings.json
+data
