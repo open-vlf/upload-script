@@ -8,6 +8,7 @@ from fnmatch import fnmatch
 from rich import print
 from rich.progress import track
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from firebase_admin import firestore
 from firebase_admin import credentials
@@ -16,6 +17,7 @@ root = "./"
 pattern = "*.mat"
 db_file_name = "db.json"
 bucket_name = "craam-files-bucket"
+tz = ZoneInfo("America/Sao_Paulo")
 
 s3 = boto3.client(
     "s3",
@@ -139,6 +141,7 @@ def store_narrowband(file_name: str, path: str, db) -> None:
                 int(file_data["Hour"]),
                 int(file_data["Minute"]),
                 int(file_data["Second"]),
+                tzinfo=tz,
             ),
             "CC": file_data["CC"],
             "typeABCDF": file_data["Type_ABCDF"],
@@ -170,6 +173,7 @@ def store_broadband(file_name: str, path: str, db) -> None:
                 int(file_data["Hour"]),
                 int(file_data["Minute"]),
                 int(file_data["Second"]),
+                tzinfo=tz,
             ),
             "CC": file_data["CC"],
             "A": file_data["A"],
