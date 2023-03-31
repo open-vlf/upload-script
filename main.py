@@ -152,7 +152,7 @@ def store_narrowband(file_name: str, path: str, db) -> None:
 
 
 def store_broadband(file_name: str, path: str, db) -> None:
-    file_data = get_broadband_data()(file_name)
+    file_data = get_broadband_data(file_name)
 
     data = f'20{file_data["Year"]}/{file_data["Month"]}/{file_data["Day"]}'
     s3_path = f'{data}/broadband/{file_data["Station_ID"]}/{file_name}'
@@ -213,13 +213,11 @@ def main() -> None:
 
                 if len(name) == narrowband_file_size and should_process_file(file_path):
                     narrowband_queue.append(file_path)
-                    print(f"Found narrowband file {narrowband_queue[-1]}")
 
                 elif len(name) == broadband_file_size and should_process_file(
                     file_path
                 ):
                     broadband_queue.append(file_path)
-                    print(f"Found broadband file {broadband_queue[-1]}")
 
                 elif (
                     len(name) == narrowband_file_size
