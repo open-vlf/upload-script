@@ -228,14 +228,25 @@ def main() -> None:
                 else:
                     print(f"File {file_path} not supported, skipping...")
 
+    save_json_data()
+
     print(
         f"Found {len(narrowband_queue)} narrowband files and {len(broadband_queue)} broadband files"
     )
 
-    for item in track(narrowband_queue, description="Working on narrowband files"):
+    starter_narrowband_queue = [elem for elem in narrowband_queue]
+    starter_broadband_queue = [elem for elem in broadband_queue]
+
+    for item in track(
+        starter_narrowband_queue,
+        description="Working on narrowband files",
+    ):
         upload_to_s3(item, NARROWBAND, db)
 
-    for item in track(broadband_queue, description="Working on broadband files"):
+    for item in track(
+        starter_broadband_queue,
+        description="Working on broadband files",
+    ):
         upload_to_s3(item, BROADBAND, db)
 
     save_json_data()
