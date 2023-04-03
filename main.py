@@ -123,7 +123,7 @@ def store_narrowband(file_name: str, path: str, db) -> None:
 
     data = f'20{file_data["Year"]}/{file_data["Month"]}/{file_data["Day"]}'
     s3_path = f'{data}/narrowband/{file_data["Station_ID"]}/{file_name}'
-    collection_name = f'craam/date/year/20{file_data["Year"]}/station/{file_data["Station_ID"]}/month_day/{file_data["Month"]}_{file_data["Day"]}/narrowband'
+    collection_name = f'craam/date/year/20{file_data["Year"]}/station/{file_data["Station_ID"]}/band/narrowband/month_day/{file_data["Month"]}_{file_data["Day"]}/file'
 
     s3.upload_file(path, bucket_name, s3_path)
 
@@ -156,7 +156,7 @@ def store_broadband(file_name: str, path: str, db) -> None:
 
     data = f'20{file_data["Year"]}/{file_data["Month"]}/{file_data["Day"]}'
     s3_path = f'{data}/broadband/{file_data["Station_ID"]}/{file_name}'
-    collection_name = f'craam/date/year/20{file_data["Year"]}/station/{file_data["Station_ID"]}/month_day/{file_data["Month"]}_{file_data["Day"]}/broadband'
+    collection_name = f'craam/date/year/20{file_data["Year"]}/station/band/broadband/{file_data["Station_ID"]}/month_day/{file_data["Month"]}_{file_data["Day"]}/file'
 
     s3.upload_file(path, bucket_name, s3_path)
 
