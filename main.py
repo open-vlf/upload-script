@@ -73,7 +73,7 @@ def get_broadband_data(filename: str) -> dict:
         return {
             "Station_ID": filename[:3],
             "-": filename[3:4],
-            "Year": filename[4:8],
+            "Year": filename[4:8][2:],
             "Month": filename[8:10],
             "Day": filename[10:12],
             ".fits": filename[12:],
