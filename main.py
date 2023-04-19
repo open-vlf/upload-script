@@ -9,15 +9,20 @@ from rich import print
 from rich.progress import track
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from dotenv import load_dotenv
+
 
 from firebase_admin import firestore
 from firebase_admin import credentials
 
 root = "./"
 pattern = "*.mat"
+fits_pattern = "*.fits"
 db_file_name = "db.json"
 bucket_name = "craam-files-bucket"
 tz = ZoneInfo("America/Sao_Paulo")
+
+load_dotenv()
 
 s3 = boto3.client(
     "s3",
@@ -30,6 +35,7 @@ BROADBAND = "BROADBAND"
 
 narrowband_file_size = 26
 broadband_file_size = 22
+fits_broadband_file_size = 17
 
 uploaded_files = []
 narrowband_queue = []
@@ -61,6 +67,18 @@ def get_narrowband_data(filename: str) -> dict:
 
 
 def get_broadband_data(filename: str) -> dict:
+    is_fits = filename.endswith("fits")
+
+    if is_fits:
+        return {
+            "Station_ID": filename[:3],
+            "-": filename[3:4],
+            "Year": filename[4:8],
+            "Month": filename[8:10],
+            "Day": filename[10:12],
+            ".fits": filename[12:],
+        }
+
     return {
         "Station_ID": filename[:2],
         "Year": filename[2:4],
@@ -160,23 +178,33 @@ def store_broadband(file_name: str, path: str, db) -> None:
 
     s3.upload_file(path, bucket_name, s3_path)
 
+    broadband_datetime = datetime(
+        int(file_data["Year"]),
+        int(file_data["Month"]),
+        int(file_data["Day"]),
+        tzinfo=tz,
+    )
+
+    if file_name.endswith(".mat"):
+        broadband_datetime = datetime(
+            int(f"20{file_data['Year']}"),
+            int(file_data["Month"]),
+            int(file_data["Day"]),
+            int(file_data["Hour"]),
+            int(file_data["Minute"]),
+            int(file_data["Second"]),
+            tzinfo=tz,
+        )
+
     db.collection(collection_name).document(file_name).set(
         {
             "fileName": file_name,
             "path": s3_path,
             "url": f"https://{bucket_name}.s3.sa-east-1.amazonaws.com/{s3_path}",
             "stationId": file_data["Station_ID"],
-            "dateTime": datetime(
-                int(f"20{file_data['Year']}"),
-                int(file_data["Month"]),
-                int(file_data["Day"]),
-                int(file_data["Hour"]),
-                int(file_data["Minute"]),
-                int(file_data["Second"]),
-                tzinfo=tz,
-            ),
-            "CC": file_data["CC"],
-            "A": file_data["A"],
+            "dateTime": broadband_datetime,
+            "CC": file_data.get("CC"),
+            "A": file_data.get("A"),
             "timestamp": firestore.SERVER_TIMESTAMP,
             "endpointType": "AWS S3",
         }
@@ -206,7 +234,9 @@ def main() -> None:
 
     get_json_data()
 
-    for path, subdirs, files in track(os.walk(root), description="Finding .MAT files"):
+    for path, subdirs, files in track(
+        os.walk(root), description="Finding supported files"
+    ):
         for name in files:
             if fnmatch(name, pattern):
                 file_path = os.path.join(path, name)
@@ -224,6 +254,17 @@ def main() -> None:
                     or len(name) == broadband_file_size
                 ) and not should_process_file(file_path):
                     print(f"File {file_path} is already uploaded or in queue")
+
+                else:
+                    print(f"File {file_path} not supported, skipping...")
+
+            elif fnmatch(name, fits_pattern):
+                file_path = os.path.join(path, name)
+
+                if len(name) == fits_broadband_file_size and should_process_file(
+                    file_path
+                ):
+                    broadband_queue.append(file_path)
 
                 else:
                     print(f"File {file_path} not supported, skipping...")
