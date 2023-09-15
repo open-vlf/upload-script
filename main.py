@@ -1,19 +1,16 @@
-import firebase_admin
+from fnmatch import fnmatch
 import typer
 import os
 import json
 import boto3
 
-from fnmatch import fnmatch
 from rich import print
 from rich.progress import track
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
-
-from firebase_admin import firestore
-from firebase_admin import credentials
+from pymongo import MongoClient
 
 root = "./"
 pattern = "*.mat"
@@ -63,6 +60,7 @@ def get_narrowband_data(filename: str) -> dict:
         # D is high resolution (50 Hz sampling rate) phase
         # F is high resolution (50 Hz sampling rate) effective group delay
         ".mat": filename[22:26],
+        "extension": "mat",
     }
 
 
@@ -77,6 +75,7 @@ def get_broadband_data(filename: str) -> dict:
             "Month": filename[8:10],
             "Day": filename[10:12],
             ".fits": filename[12:],
+            "extension": "fits",
         }
 
     return {
@@ -93,6 +92,7 @@ def get_broadband_data(filename: str) -> dict:
         "CC": filename[16:18],
         # CC — 00 for N/S channel, 01 for E/W channel
         ".mat": filename[18:22],
+        "extension": "mat",
     }
 
 
@@ -136,16 +136,14 @@ def should_process_file(path: str) -> bool:
     )
 
 
-def store_narrowband(file_name: str, path: str, db) -> None:
+def store_narrowband(file_name: str, path: str, collection) -> None:
     file_data = get_narrowband_data(file_name)
 
     data = f'20{file_data["Year"]}/{file_data["Month"]}/{file_data["Day"]}'
     s3_path = f'{data}/narrowband/{file_data["Station_ID"]}/{file_name}'
-    collection_name = f'craam/date/year/20{file_data["Year"]}/station/{file_data["Station_ID"]}/band/narrowband/month_day/{file_data["Month"]}_{file_data["Day"]}/file'
-
     s3.upload_file(path, bucket_name, s3_path)
 
-    db.collection(collection_name).document(file_name).set(
+    collection.insert_one(
         {
             "fileName": file_name,
             "path": s3_path,
@@ -163,19 +161,19 @@ def store_narrowband(file_name: str, path: str, db) -> None:
             ),
             "CC": file_data["CC"],
             "typeABCDF": file_data["Type_ABCDF"],
-            "timestamp": firestore.SERVER_TIMESTAMP,
+            "timestamp": datetime.now(),
             "endpointType": "AWS S3",
+            "type": "narrowband",
+            "extension": file_data.get("extension"),
         }
     )
 
 
-def store_broadband(file_name: str, path: str, db) -> None:
+def store_broadband(file_name: str, path: str, collection) -> None:
     file_data = get_broadband_data(file_name)
 
     data = f'20{file_data["Year"]}/{file_data["Month"]}/{file_data["Day"]}'
     s3_path = f'{data}/broadband/{file_data["Station_ID"]}/{file_name}'
-    collection_name = f'craam/date/year/20{file_data["Year"]}/station/band/broadband/{file_data["Station_ID"]}/month_day/{file_data["Month"]}_{file_data["Day"]}/file'
-
     s3.upload_file(path, bucket_name, s3_path)
 
     broadband_datetime = datetime(
@@ -196,7 +194,7 @@ def store_broadband(file_name: str, path: str, db) -> None:
             tzinfo=tz,
         )
 
-    db.collection(collection_name).document(file_name).set(
+    collection.insert_one(
         {
             "fileName": file_name,
             "path": s3_path,
@@ -205,8 +203,10 @@ def store_broadband(file_name: str, path: str, db) -> None:
             "dateTime": broadband_datetime,
             "CC": file_data.get("CC"),
             "A": file_data.get("A"),
-            "timestamp": firestore.SERVER_TIMESTAMP,
+            "timestamp": datetime.now(),
             "endpointType": "AWS S3",
+            "type": "broadband",
+            "extension": file_data.get("extension"),
         }
     )
 
@@ -228,9 +228,15 @@ def upload_to_s3(path: str, type: str, db) -> None:
 
 
 def main() -> None:
-    cred = credentials.Certificate("./credentials.json")
-    firebase_admin.initialize_app(cred)
-    db = firestore.client()
+    client = MongoClient(os.getenv("MONGO_URI"))
+    database = client["main"]
+    collection = database["files"]
+
+    try:
+        client.admin.command("ping")
+        print("Pinged your deployment. You successfully connected to MongoDB!")
+    except Exception as e:
+        print(e)
 
     get_json_data()
 
@@ -275,20 +281,17 @@ def main() -> None:
         f"Found {len(narrowband_queue)} narrowband files and {len(broadband_queue)} broadband files"
     )
 
-    starter_narrowband_queue = [elem for elem in narrowband_queue]
-    starter_broadband_queue = [elem for elem in broadband_queue]
-
     for item in track(
-        starter_narrowband_queue,
+        [elem for elem in narrowband_queue],
         description="Working on narrowband files",
     ):
-        upload_to_s3(item, NARROWBAND, db)
+        upload_to_s3(item, NARROWBAND, collection)
 
     for item in track(
-        starter_broadband_queue,
+        [elem for elem in broadband_queue],
         description="Working on broadband files",
     ):
-        upload_to_s3(item, BROADBAND, db)
+        upload_to_s3(item, BROADBAND, collection)
 
     save_json_data()
 
