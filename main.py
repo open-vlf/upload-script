@@ -234,9 +234,10 @@ def main() -> None:
 
     try:
         client.admin.command("ping")
-        print("Pinged your deployment. You successfully connected to MongoDB!")
+        print("Successfully connected to MongoDB!")
     except Exception as e:
         print(e)
+        raise Exception("Could not connect to database")
 
     get_json_data()
 
