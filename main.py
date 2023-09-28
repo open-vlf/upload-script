@@ -143,36 +143,45 @@ def store_narrowband(file_name: str, path: str, collection) -> None:
     s3_path = f'{data}/narrowband/{file_data["Station_ID"]}/{file_name}'
     s3.upload_file(path, bucket_name, s3_path)
 
-    collection.insert_one(
+    collection.update_one(
         {
-            "fileName": file_name,
             "path": s3_path,
-            "url": f"https://{bucket_name}.s3.sa-east-1.amazonaws.com/{s3_path}",
-            "stationId": file_data["Station_ID"],
-            "transmitter": file_data["Transmitter"],
-            "dateTime": datetime(
-                int(f"20{file_data['Year']}"),
-                int(file_data["Month"]),
-                int(file_data["Day"]),
-                int(file_data["Hour"]),
-                int(file_data["Minute"]),
-                int(file_data["Second"]),
-                tzinfo=tz,
-            ),
-            "CC": file_data["CC"],
-            "typeABCDF": file_data["Type_ABCDF"],
-            "timestamp": datetime.now(),
-            "endpointType": "AWS S3",
-            "type": "narrowband",
-            "extension": file_data.get("extension"),
-        }
+        },
+        {
+            "$set": {
+                "fileName": file_name,
+                "path": s3_path,
+                "url": f"https://{bucket_name}.s3.sa-east-1.amazonaws.com/{s3_path}",
+                "stationId": file_data["Station_ID"],
+                "transmitter": file_data["Transmitter"],
+                "dateTime": datetime(
+                    int(f"20{file_data['Year']}"),
+                    int(file_data["Month"]),
+                    int(file_data["Day"]),
+                    int(file_data["Hour"]),
+                    int(file_data["Minute"]),
+                    int(file_data["Second"]),
+                    tzinfo=tz,
+                ),
+                "CC": file_data["CC"],
+                "typeABCDF": file_data["Type_ABCDF"],
+                "timestamp": datetime.now(),
+                "endpointType": "AWS S3",
+                "type": "narrowband",
+                "extension": file_data.get("extension"),
+            },
+        },
+        upsert=True,
     )
 
 
 def store_broadband(file_name: str, path: str, collection) -> None:
     file_data = get_broadband_data(file_name)
 
-    data = f'20{file_data["Year"]}/{file_data["Month"]}/{file_data["Day"]}'
+    if file_data["extension"] != "fits":
+        file_data["Year"] = f"20{file_data['Year']}"
+
+    data = f'{file_data["Year"]}/{file_data["Month"]}/{file_data["Day"]}'
     s3_path = f'{data}/broadband/{file_data["Station_ID"]}/{file_name}'
     s3.upload_file(path, bucket_name, s3_path)
 
@@ -194,20 +203,26 @@ def store_broadband(file_name: str, path: str, collection) -> None:
             tzinfo=tz,
         )
 
-    collection.insert_one(
+    collection.update_one(
         {
-            "fileName": file_name,
             "path": s3_path,
-            "url": f"https://{bucket_name}.s3.sa-east-1.amazonaws.com/{s3_path}",
-            "stationId": file_data["Station_ID"],
-            "dateTime": broadband_datetime,
-            "CC": file_data.get("CC"),
-            "A": file_data.get("A"),
-            "timestamp": datetime.now(),
-            "endpointType": "AWS S3",
-            "type": "broadband",
-            "extension": file_data.get("extension"),
-        }
+        },
+        {
+            "$set": {
+                "fileName": file_name,
+                "path": s3_path,
+                "url": f"https://{bucket_name}.s3.sa-east-1.amazonaws.com/{s3_path}",
+                "stationId": file_data["Station_ID"],
+                "dateTime": broadband_datetime,
+                "CC": file_data.get("CC"),
+                "A": file_data.get("A"),
+                "timestamp": datetime.now(),
+                "endpointType": "AWS S3",
+                "type": "broadband",
+                "extension": file_data.get("extension"),
+            }
+        },
+        upsert=True,
     )
 
 
