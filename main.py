@@ -3,6 +3,8 @@ import typer
 import os
 import json
 import boto3
+from collections import defaultdict
+from typing import Optional
 
 from rich import print
 from rich.progress import track
@@ -10,7 +12,9 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
-from pymongo import MongoClient
+import firebase_admin
+from google.auth import default as google_auth_default
+from google.cloud import firestore
 
 root = "./"
 pattern = "*.mat"
@@ -29,6 +33,15 @@ s3 = boto3.client(
 
 NARROWBAND = "NARROWBAND"
 BROADBAND = "BROADBAND"
+narrowband_label = "narrowband"
+broadband_label = "broadband"
+
+FILES_BY_DAY_COLLECTION = "files_by_day"
+YEARS_STATIONS_COLLECTION = "years_stations"
+AVAILABLE_DATES_COLLECTION = "available_dates"
+MATRIX_COLLECTION = "matrix"
+
+MAX_BATCH_SIZE = 500
 
 narrowband_file_size = 26
 broadband_file_size = 22
@@ -135,125 +148,308 @@ def should_process_file(path: str) -> bool:
         path in uploaded_files or path in narrowband_queue or path in broadband_queue
     )
 
-
-def store_narrowband(file_name: str, path: str, collection) -> None:
-    file_data = get_narrowband_data(file_name)
-
-    data = f'20{file_data["Year"]}/{file_data["Month"]}/{file_data["Day"]}'
-    s3_path = f'{data}/narrowband/{file_data["Station_ID"]}/{file_name}'
-    s3.upload_file(path, bucket_name, s3_path)
-
-    collection.update_one(
-        {
-            "path": s3_path,
-        },
-        {
-            "$set": {
-                "fileName": file_name,
-                "path": s3_path,
-                "url": f"https://{bucket_name}.s3.sa-east-1.amazonaws.com/{s3_path}",
-                "stationId": file_data["Station_ID"],
-                "transmitter": file_data["Transmitter"],
-                "dateTime": datetime(
-                    int(f"20{file_data['Year']}"),
-                    int(file_data["Month"]),
-                    int(file_data["Day"]),
-                    int(file_data["Hour"]),
-                    int(file_data["Minute"]),
-                    int(file_data["Second"]),
-                    tzinfo=tz,
-                ),
-                "CC": file_data["CC"],
-                "typeABCDF": file_data["Type_ABCDF"],
-                "timestamp": datetime.now(),
-                "endpointType": "AWS S3",
-                "type": "narrowband",
-                "extension": file_data.get("extension"),
-            },
-        },
-        upsert=True,
+def init_firestore():
+    if not firebase_admin._apps:
+        firebase_admin.initialize_app()
+    credentials, project = google_auth_default()
+    database_id = os.getenv("FIRESTORE_DATABASE", "(default)")
+    project_id = os.getenv("GOOGLE_CLOUD_PROJECT") or project
+    return firestore.Client(
+        project=project_id,
+        credentials=credentials,
+        database=database_id,
     )
 
 
-def store_broadband(file_name: str, path: str, collection) -> None:
-    file_data = get_broadband_data(file_name)
+def infer_file_kind(file_name: str):
+    if file_name.endswith(".fits") and len(file_name) == fits_broadband_file_size:
+        return BROADBAND
+    if file_name.endswith(".mat") and len(file_name) == narrowband_file_size:
+        return NARROWBAND
+    if file_name.endswith(".mat") and len(file_name) == broadband_file_size:
+        return BROADBAND
+    return None
 
-    if file_data["extension"] != "fits":
-        file_data["Year"] = f"20{file_data['Year']}"
 
-    data = f'{file_data["Year"]}/{file_data["Month"]}/{file_data["Day"]}'
-    s3_path = f'{data}/broadband/{file_data["Station_ID"]}/{file_name}'
-    s3.upload_file(path, bucket_name, s3_path)
+def build_file_entry(file_name: str, file_kind: Optional[str] = None):
+    if file_kind is None:
+        file_kind = infer_file_kind(file_name)
 
-    broadband_datetime = datetime(
-        int(file_data["Year"]),
-        int(file_data["Month"]),
-        int(file_data["Day"]),
-        tzinfo=tz,
-    )
+    if file_kind is None:
+        return None
 
-    if file_name.endswith(".mat"):
-        broadband_datetime = datetime(
-            int(f"20{file_data['Year']}"),
-            int(file_data["Month"]),
-            int(file_data["Day"]),
+    if file_kind == NARROWBAND:
+        file_data = get_narrowband_data(file_name)
+        year = int(f"20{file_data['Year']}")
+        month = int(file_data["Month"])
+        day = int(file_data["Day"])
+        date_time = datetime(
+            year,
+            month,
+            day,
             int(file_data["Hour"]),
             int(file_data["Minute"]),
             int(file_data["Second"]),
             tzinfo=tz,
         )
-
-    collection.update_one(
-        {
+        station_id = file_data["Station_ID"]
+        extension = file_data["extension"]
+        data_path = f"{year:04d}/{month:02d}/{day:02d}"
+        s3_path = f"{data_path}/narrowband/{station_id}/{file_name}"
+        file_record = {
+            "fileName": file_name,
             "path": s3_path,
-        },
-        {
-            "$set": {
-                "fileName": file_name,
-                "path": s3_path,
-                "url": f"https://{bucket_name}.s3.sa-east-1.amazonaws.com/{s3_path}",
-                "stationId": file_data["Station_ID"],
-                "dateTime": broadband_datetime,
-                "CC": file_data.get("CC"),
-                "A": file_data.get("A"),
-                "timestamp": datetime.now(),
-                "endpointType": "AWS S3",
-                "type": "broadband",
-                "extension": file_data.get("extension"),
-            }
-        },
-        upsert=True,
-    )
+            "url": f"https://{bucket_name}.s3.sa-east-1.amazonaws.com/{s3_path}",
+            "stationId": station_id,
+            "transmitter": file_data["Transmitter"],
+            "dateTime": date_time,
+            "CC": file_data["CC"],
+            "typeABCDF": file_data["Type_ABCDF"],
+            "endpointType": "AWS S3",
+            "type": narrowband_label,
+            "extension": extension,
+        }
+        type_label = narrowband_label
+
+    else:
+        file_data = get_broadband_data(file_name)
+        station_id = file_data["Station_ID"]
+        extension = file_data["extension"]
+
+        if extension == "fits":
+            year = int(file_data["Year"])
+            month = int(file_data["Month"])
+            day = int(file_data["Day"])
+            date_time = datetime(year, month, day, tzinfo=tz)
+        else:
+            year = int(f"20{file_data['Year']}")
+            month = int(file_data["Month"])
+            day = int(file_data["Day"])
+            date_time = datetime(
+                year,
+                month,
+                day,
+                int(file_data["Hour"]),
+                int(file_data["Minute"]),
+                int(file_data["Second"]),
+                tzinfo=tz,
+            )
+
+        data_path = f"{year:04d}/{month:02d}/{day:02d}"
+        s3_path = f"{data_path}/broadband/{station_id}/{file_name}"
+        file_record = {
+            "fileName": file_name,
+            "path": s3_path,
+            "url": f"https://{bucket_name}.s3.sa-east-1.amazonaws.com/{s3_path}",
+            "stationId": station_id,
+            "dateTime": date_time,
+            "CC": file_data.get("CC"),
+            "A": file_data.get("A"),
+            "endpointType": "AWS S3",
+            "type": broadband_label,
+            "extension": extension,
+        }
+        type_label = broadband_label
+
+    date_str = f"{year:04d}-{month:02d}-{day:02d}"
+    group_id = f"{date_str}_{station_id}_{type_label}_{extension}"
+
+    return {
+        "group_id": group_id,
+        "date": date_str,
+        "year": year,
+        "month": month,
+        "day": day,
+        "stationId": station_id,
+        "type": type_label,
+        "extension": extension,
+        "file": file_record,
+        "s3_path": s3_path,
+    }
 
 
-def upload_to_s3(path: str, type: str, db) -> None:
+def upload_to_s3(path: str, file_type: str) -> None:
     file_name = os.path.basename(path)
+    file_entry = build_file_entry(file_name, file_type)
 
-    if type == NARROWBAND:
-        store_narrowband(file_name, path, db)
+    if not file_entry:
+        print(f"File {path} not supported, skipping upload...")
+        return
+
+    s3.upload_file(path, bucket_name, file_entry["s3_path"])
+
+    if file_type == NARROWBAND:
         narrowband_queue.remove(path)
-
-    elif type == BROADBAND:
-        store_broadband(file_name, path, db)
+    elif file_type == BROADBAND:
         broadband_queue.remove(path)
 
     uploaded_files.append(path)
-
     save_json_data()
 
 
+def build_firestore_payload(file_paths):
+    groups = {}
+    years_stations = defaultdict(set)
+    available_dates = defaultdict(
+        lambda: {narrowband_label: set(), broadband_label: set()}
+    )
+    matrix = defaultdict(lambda: defaultdict(lambda: {"count": 0, "stations": set()}))
+
+    for path in file_paths:
+        file_name = os.path.basename(path)
+        file_entry = build_file_entry(file_name)
+
+        if not file_entry:
+            continue
+
+        group_id = file_entry["group_id"]
+        group = groups.get(group_id)
+
+        if not group:
+            groups[group_id] = {
+                "date": file_entry["date"],
+                "year": file_entry["year"],
+                "month": file_entry["month"],
+                "day": file_entry["day"],
+                "stationId": file_entry["stationId"],
+                "type": file_entry["type"],
+                "extension": file_entry["extension"],
+                "files": [file_entry["file"]],
+            }
+        else:
+            group["files"].append(file_entry["file"])
+
+        years_stations[(file_entry["extension"], file_entry["year"])].add(
+            file_entry["stationId"]
+        )
+
+        available_dates[
+            (file_entry["extension"], file_entry["stationId"], file_entry["year"])
+        ][file_entry["type"]].add((file_entry["month"], file_entry["day"]))
+
+        matrix[(file_entry["extension"], file_entry["year"])][file_entry["date"]][
+            "count"
+        ] += 1
+        matrix[(file_entry["extension"], file_entry["year"])][file_entry["date"]][
+            "stations"
+        ].add(file_entry["stationId"])
+
+    for group in groups.values():
+        group["files"].sort(
+            key=lambda item: item.get("dateTime")
+            or datetime.min.replace(tzinfo=tz)
+        )
+        group["fileCount"] = len(group["files"])
+
+    return groups, years_stations, available_dates, matrix
+
+
+def commit_batches(db, documents):
+    if not documents:
+        return
+
+    batch = db.batch()
+    count = 0
+
+    for doc_ref, data in documents:
+        batch.set(doc_ref, data)
+        count += 1
+
+        if count >= MAX_BATCH_SIZE:
+            batch.commit()
+            batch = db.batch()
+            count = 0
+
+    if count:
+        batch.commit()
+
+
+def write_firestore_documents(db, groups, years_stations, available_dates, matrix):
+    print("Writing files_by_day documents...")
+    files_docs = []
+    for group_id, group_data in groups.items():
+        doc_ref = db.collection(FILES_BY_DAY_COLLECTION).document(group_id)
+        files_docs.append((doc_ref, group_data))
+    commit_batches(db, files_docs)
+
+    print("Writing years_stations documents...")
+    years_docs = []
+    for (extension, year), stations in years_stations.items():
+        doc_ref = db.collection(YEARS_STATIONS_COLLECTION).document(
+            f"{extension}_{year}"
+        )
+        years_docs.append(
+            (
+                doc_ref,
+                {
+                    "year": year,
+                    "stations": sorted(stations),
+                    "extension": extension,
+                },
+            )
+        )
+    commit_batches(db, years_docs)
+
+    print("Writing available_dates documents...")
+    dates_docs = []
+    for (extension, station_id, year), types in available_dates.items():
+        narrowband_dates = sorted(types[narrowband_label])
+        broadband_dates = sorted(types[broadband_label])
+
+        narrowband_payload = [
+            {"day": f"{day:02d}", "month": f"{month:02d}"}
+            for month, day in narrowband_dates
+        ]
+        broadband_payload = [
+            {"day": f"{day:02d}", "month": f"{month:02d}"}
+            for month, day in broadband_dates
+        ]
+
+        doc_ref = db.collection(AVAILABLE_DATES_COLLECTION).document(
+            f"{extension}_{station_id}_{year}"
+        )
+        dates_docs.append(
+            (
+                doc_ref,
+                {
+                    "stationId": station_id,
+                    "year": year,
+                    "narrowband": narrowband_payload,
+                    "broadband": broadband_payload,
+                    "extension": extension,
+                },
+            )
+        )
+    commit_batches(db, dates_docs)
+
+    print("Writing matrix documents...")
+    matrix_docs = []
+    for (extension, year), date_data in matrix.items():
+        items = []
+        for date, values in sorted(date_data.items()):
+            items.append(
+                {
+                    "date": date,
+                    "stations": sorted(values["stations"]),
+                    "count": values["count"],
+                }
+            )
+
+        doc_ref = db.collection(MATRIX_COLLECTION).document(f"{extension}_{year}")
+        matrix_docs.append(
+            (
+                doc_ref,
+                {
+                    "year": year,
+                    "items": items,
+                    "extension": extension,
+                },
+            )
+        )
+    commit_batches(db, matrix_docs)
+
+
 def main() -> None:
-    client = MongoClient(os.getenv("MONGO_URI"))
-    database = client["main"]
-    collection = database["files"]
-
-    try:
-        client.admin.command("ping")
-        print("Successfully connected to MongoDB!")
-    except Exception as e:
-        print(e)
-        raise Exception("Could not connect to database")
-
     get_json_data()
 
     for path, subdirs, files in track(
@@ -301,15 +497,26 @@ def main() -> None:
         [elem for elem in narrowband_queue],
         description="Working on narrowband files",
     ):
-        upload_to_s3(item, NARROWBAND, collection)
+        upload_to_s3(item, NARROWBAND)
 
     for item in track(
         [elem for elem in broadband_queue],
         description="Working on broadband files",
     ):
-        upload_to_s3(item, BROADBAND, collection)
+        upload_to_s3(item, BROADBAND)
 
     save_json_data()
+
+    if not uploaded_files:
+        print("No uploaded files found to index in Firestore.")
+        return
+
+    print("Building Firestore documents from uploaded files...")
+    db = init_firestore()
+    groups, years_stations, available_dates, matrix = build_firestore_payload(
+        uploaded_files
+    )
+    write_firestore_documents(db, groups, years_stations, available_dates, matrix)
 
     print("Program finished.")
 
